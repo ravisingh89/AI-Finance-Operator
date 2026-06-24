@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings
 from typing import List
-import json
 
 class Settings(BaseSettings):
     APP_ENV: str = "development"
@@ -19,8 +18,12 @@ class Settings(BaseSettings):
     CLERK_SECRET_KEY: str
     CLERK_PUBLISHABLE_KEY: str
 
-    # CORS
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000"]
+    # CORS — stored as a plain comma-separated string, parsed at runtime
+    ALLOWED_ORIGINS_STR: str = "http://localhost:3000"
+
+    @property
+    def ALLOWED_ORIGINS(self) -> List[str]:
+        return [o.strip() for o in self.ALLOWED_ORIGINS_STR.split(",")]
 
     class Config:
         env_file = ".env"
