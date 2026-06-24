@@ -2,8 +2,9 @@ services:
   - type: web
     name: ai-finance-operator-api
     env: python
+    pythonVersion: "3.11.9"
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
@@ -27,4 +28,4 @@ services:
       - key: CLERK_PUBLISHABLE_KEY
         sync: false
       - key: ALLOWED_ORIGINS
-        value: '["https://your-app.vercel.app"]'
+        value: '["https://ai-finance-operator.vercel.app"]'
