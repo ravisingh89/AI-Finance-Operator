@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     CLERK_SECRET_KEY: str
     CLERK_PUBLISHABLE_KEY: str
+    CLERK_JWT_ISSUER: str
 
     # Plain comma-separated string — no JSON arrays, no quotes needed
     # Example: https://ai-finance-operator.vercel.app,http://localhost:3000
