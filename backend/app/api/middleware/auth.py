@@ -19,8 +19,13 @@ async def get_current_user(authorization: str = Header(None)) -> dict:
         # Clerk tokens use HS256 algorithm with the secret key
         payload = jwt.decode(
             token,
-            settings.CLERK_SECRET_KEY,
-            algorithms=["HS256"],
+            public_key,
+            algorithms=["RS256"],
+            options={
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_aud": False
+            }
         )
         
         # Extract user ID from token
