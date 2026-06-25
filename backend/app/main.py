@@ -6,16 +6,29 @@ from app.api.routes import upload, analysis, reports, health
 app = FastAPI(
     title="AI Finance Operator",
     version="1.0.0",
-    description="Agentic AI personal finance analysis — UAE & India"
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Parse allowed origins — support wildcard * for easy development
+origins = settings.ALLOWED_ORIGINS
+
+# If any entry is *, allow all origins
+if "*" in origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
 
 app.include_router(health.router,   tags=["Health"])
 app.include_router(upload.router,   prefix="/api/v1/statements", tags=["Statements"])
