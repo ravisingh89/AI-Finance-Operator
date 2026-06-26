@@ -1,62 +1,97 @@
-from sqlalchemy import Column, String, Float, Boolean, DateTime, Text, Integer, Date
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy.sql import func
-import uuid
-from app.config import settings
+"""
+In-memory store as primary with optional PostgreSQL.
+Works on Render free tier which blocks outbound DB connections.
+"""
+import json
+import os
+from datetime import datetime
+from collections import defaultdict
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+# ── In-memory store (survives the request lifetime on free tier) ──────────────
+_store = {
+    "reports":      {},   # user_id -> latest report dict
+    "statements":   {},   # statement_id -> status
+    "transactions": defaultdict(list),  # user_id -> list of txs
+}
 
-class Base(DeclarativeBase):
-    pass
+def save_report(user_id: str, statement_id: str, report: dict):
+    _store["reports"][user_id] = {
+        "statement_id": statement_id,
+        "report": report,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    # Also persist to /tmp so it survives across requests
+    try:
+        os.makedirs("/tmp/reports", exist_ok=True)
+        with open(f"/tmp/reports/{user_id}.json", "w") as f:
+            json.dump(_store["reports"][user_id], f)
+    except Exception as e:
+        print(f"[WARN] Could not persist report to disk: {e}")
 
-class User(Base):
-    __tablename__ = "users"
-    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    clerk_id   = Column(String(255), unique=True, nullable=False)
-    email      = Column(String(255), nullable=False)
-    full_name  = Column(String(255))
-    currency   = Column(String(3), default="AED")
-    region     = Column(String(10), default="UAE")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+def get_report(user_id: str) -> dict | None:
+    # Check memory first
+    if user_id in _store["reports"]:
+        return _store["reports"][user_id]
+    # Try disk
+    try:
+        path = f"/tmp/reports/{user_id}.json"
+        if os.path.exists(path):
+            with open(path) as f:
+                data = json.load(f)
+                _store["reports"][user_id] = data
+                return data
+    except Exception:
+        pass
+    return None
 
-class Statement(Base):
-    __tablename__ = "statements"
-    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id    = Column(UUID(as_uuid=True), nullable=False)
-    file_name  = Column(String(500), nullable=False)
-    file_url   = Column(Text, nullable=False)
-    file_type  = Column(String(10), nullable=False)
-    status     = Column(String(20), default="pending")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+def set_status(statement_id: str, status: str):
+    _store["statements"][statement_id] = status
+    try:
+        os.makedirs("/tmp/statements", exist_ok=True)
+        with open(f"/tmp/statements/{statement_id}.txt", "w") as f:
+            f.write(status)
+    except Exception:
+        pass
 
-class Transaction(Base):
-    __tablename__ = "transactions"
-    id                  = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    statement_id        = Column(UUID(as_uuid=True), nullable=False)
-    user_id             = Column(UUID(as_uuid=True), nullable=False)
-    date                = Column(String(20), nullable=False)
-    merchant            = Column(String(500))
-    amount              = Column(Float, nullable=False)
-    currency            = Column(String(3), nullable=False)
-    type                = Column(String(10), nullable=False)
-    description         = Column(Text)
-    category            = Column(String(50))
-    category_confidence = Column(Float)
-    created_at          = Column(DateTime(timezone=True), server_default=func.now())
+def get_status(statement_id: str) -> str:
+    if statement_id in _store["statements"]:
+        return _store["statements"][statement_id]
+    try:
+        path = f"/tmp/statements/{statement_id}.txt"
+        if os.path.exists(path):
+            with open(path) as f:
+                return f.read().strip()
+    except Exception:
+        pass
+    return "processing"
 
-class FinancialReport(Base):
-    __tablename__ = "financial_reports"
-    id           = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id      = Column(UUID(as_uuid=True), nullable=False)
-    statement_id = Column(UUID(as_uuid=True), nullable=False)
-    report_data  = Column(JSONB, nullable=False)
-    waste_score  = Column(Integer)
-    savings_score = Column(Integer)
-    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+# ── SQLAlchemy kept for optional use — won't crash if DB unreachable ──────────
+engine = None
+AsyncSessionLocal = None
+
+try:
+    from app.config import settings
+    if settings.DATABASE_URL and "postgresql" in settings.DATABASE_URL:
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+        from sqlalchemy.orm import sessionmaker
+        engine = create_async_engine(settings.DATABASE_URL, echo=False,
+                                     connect_args={"timeout": 5})
+        AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession,
+                                         expire_on_commit=False)
+        print("[INFO] PostgreSQL engine configured")
+except Exception as e:
+    print(f"[WARN] PostgreSQL unavailable, using in-memory store: {e}")
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
+    if AsyncSessionLocal:
+        async with AsyncSessionLocal() as session:
+            yield session
+    else:
+        yield None
+
+# Dummy ORM classes so imports don't break
+class Statement: pass
+class Transaction: pass
+class FinancialReport: pass
+class Base:
+    metadata = type('metadata', (), {'create_all': lambda *a, **k: None})()
